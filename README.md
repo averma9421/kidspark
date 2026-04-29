@@ -51,7 +51,8 @@ Tests use a mocked OpenAI client, so they run offline and cost nothing.
 ```
 kidspark/
 ├── models.py              Pydantic schemas for request and response
-├── generator.py           OpenAI call, system prompt, error handling
+├── tools.py               LLM-callable tools (milestones, safety) and schemas
+├── generator.py           Two-phase ReAct agent, system prompt, error handling
 ├── main.py                argparse CLI, result formatting
 ├── tests/test_generator.py
 ├── requirements.txt
@@ -59,10 +60,21 @@ kidspark/
 └── .gitignore
 ```
 
-## How it works
+## Architecture
 
-`main.py` parses CLI flags into an `ActivityRequest`. `generator.py` builds
-a user message from the request, sends it to `gpt-4o-mini` alongside a system
-prompt that defines the role, context, task, and constraints, and asks the
-API for output matching the `ActivityResponse` Pydantic schema. The parsed
-response is printed as three readable activity blocks.
+KidSpark is a two-phase ReAct agent:
+
+**Phase 1 — Tool-calling loop** (`chat.completions.create`)
+- Agent calls `get_developmental_milestones(age)` to ground design in real data
+- Agent generates 3 candidate activities
+- Agent calls `check_safety(description, age)` for each candidate
+- If safety concerns are flagged, the agent rewrites activities and re-checks
+- Loops up to 8 iterations or until LLM has no more tool calls
+
+**Phase 2 — Structured output** (`chat.completions.parse`)
+- Conversation history is collapsed into a final structured response
+- `response_format=ActivityResponse` guarantees a validated Pydantic object
+- Returns 3 activities with title, duration, materials, learning goals, safety notes
+
+## Why two phases?
+OpenAI's structured output and tool calling don't combine cleanly. The two-phase split lets the LLM reason flexibly with tools, then lock the final answer to a Pydantic schema.
